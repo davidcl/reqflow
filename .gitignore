@@ -9,7 +9,7 @@
 *.gcov
 
 # ignore binaries
-/req
+/reqflow
 /*.exe
 /main_*
 
@@ -18,6 +18,8 @@
 Makefile
 /.deps/
 /stamp-h1
+/reqflow.iss
+/test/envtest
 
 # ignore Autotools generated files
 /autom4te.cache/
@@ -25,4 +27,8 @@ Makefile
 /configure.scan
 /config.log
 /config.status
+
+# ignore eclipse project files
+/.project
+/.cproject
 
