@@ -72,6 +72,7 @@ void printErrors()
 ReqFileType ReqFileConfig::getFileType(const std::string &extension)
 {
     if (0 == strcasecmp(extension.c_str(), "txt")) return RF_TEXT;
+    else if (0 == strcasecmp(extension.c_str(), "markdown")) return RF_TEXT;
     else if (0 == strcasecmp(extension.c_str(), "odt")) return RF_ODT;
     else if (0 == strcasecmp(extension.c_str(), "docx")) return RF_DOCX;
     else if (0 == strcasecmp(extension.c_str(), "xslx")) return RF_XSLX;
