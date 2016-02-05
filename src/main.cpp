@@ -121,7 +121,6 @@ int showVersion()
     exit(1);
 }
 
-
 std::string replaceDefinedVariable(const std::list<std::pair<std::string, std::string> > &definedVariables, const std::string &token)
 {
     std::string result = token;
@@ -137,6 +136,91 @@ std::string replaceDefinedVariable(const std::list<std::pair<std::string, std::s
         }
     }
     LOG_DEBUG("replace(%s) => %s", token.c_str(), result.c_str());
+    return result;
+}
+
+void appendEnvVar(const char *startVarName, size_t len, std::string &result)
+{
+    std::string varname;
+    varname.assign(startVarName, len);
+    const char *value = getenv(varname.c_str());
+    if (value) result.append(value);
+}
+
+/** Replace environment variables in a string
+ *
+ *  The syntax for inserting env variable is: ${xx} or $xx.
+ *
+ * @param[in.out] s
+ */
+void replaceEnv(std::string &s)
+{
+    std::string result;
+    // look for patterns ${xxx} or $xxx
+    const char *startVarName = 0; // position of the first char of the variable name
+    const char *startVarDef = 0; // position of the dollar character
+
+    const char *p = s.c_str();
+    bool usedBraces = false;
+    while (*p) {
+
+        if (!startVarDef && *p == '$') {
+            startVarDef = p;
+
+        } else if (!startVarDef) {
+            result += *p;
+
+// past this point startVarDef is defined
+
+        } else if (!startVarName && *p == '{') {
+            startVarName = p+1;
+            usedBraces = true;
+
+        } else if (!startVarName && (isalnum(*p) || '_' == *p) ) {
+            startVarName = p;
+
+        } else if (!startVarName) {
+            // was a isolated '$', push it...
+            result.append(startVarDef, p-startVarDef+1);
+            startVarDef = 0;
+
+// past this point startVarName is defined
+
+        } else if (isalnum(*p) || '_' == *p) {
+
+        } else if (usedBraces && '}' != *p ) {
+            // malformed var syntax, abandon var
+            result.append(startVarDef, p-startVarDef);
+            startVarDef = 0;
+            startVarName = 0;
+
+        } else {
+            // got a correct var definition
+            appendEnvVar(startVarName, p-startVarName, result);
+
+            if (usedBraces && '}' == *p) { } // nominal termination, do not push current }
+            else result += *p;
+
+            startVarName = 0;
+            startVarDef = 0;
+
+        }
+        p++;
+    }
+
+    // push hold chars, if any
+    if (startVarDef && startVarName) appendEnvVar(startVarName, p-startVarName, result);
+    else if (startVarDef) result.append(startVarDef, p-startVarDef);
+    s = result;
+}
+
+/** Replace defined variables and environment variables
+  *
+  */
+std::string consolidateToken(const std::list<std::pair<std::string, std::string> > &definedVariables, const std::string &token)
+{
+    std::string result = replaceDefinedVariable(definedVariables, token);
+    replaceEnv(result);
     return result;
 }
 
@@ -239,14 +323,14 @@ int loadConfiguration(const char * file)
                     PUSH_ERROR(file, "", "Missing -path value for %s", fileConfig->id.c_str());
                     return -1;
                 }
-                fileConfig->path = replaceDefinedVariable(defs, pop(*line));
+                fileConfig->path = consolidateToken(defs, pop(*line));
 
             } else if (fileConfig && arg == "-start-after") {
                 if (line->empty()) {
                     PUSH_ERROR(file, "", "Missing -start-after value for %s", fileConfig->id.c_str());
                     return -1;
                 }
-                fileConfig->startAfter = replaceDefinedVariable(defs, pop(*line));
+                fileConfig->startAfter = consolidateToken(defs, pop(*line));
                 fileConfig->startAfterRegex = new regex_t();
                 int reti = regcomp(fileConfig->startAfterRegex, fileConfig->startAfter.c_str(), 0);
                 if (reti) {
@@ -260,7 +344,7 @@ int loadConfiguration(const char * file)
                     PUSH_ERROR(file, "", "Missing -stop-after value for %s", fileConfig->id.c_str());
                     return -1;
                 }
-                fileConfig->stopAfter = replaceDefinedVariable(defs, pop(*line));
+                fileConfig->stopAfter = consolidateToken(defs, pop(*line));
                 fileConfig->stopAfterRegex = new regex_t();
                 int reti = regcomp(fileConfig->stopAfterRegex, fileConfig->stopAfter.c_str(), 0);
                 if (reti) {
@@ -277,7 +361,7 @@ int loadConfiguration(const char * file)
                     PUSH_ERROR(file, "", "Missing -req value for %s", fileConfig->id.c_str());
                     return -1;
                 }
-                fileConfig->reqPattern = replaceDefinedVariable(defs, pop(*line));
+                fileConfig->reqPattern = consolidateToken(defs, pop(*line));
                 /* Compile regular expression */
                 fileConfig->reqRegex = new regex_t();
                 int reti = regcomp(fileConfig->reqRegex, fileConfig->reqPattern.c_str(), 0);
@@ -292,7 +376,7 @@ int loadConfiguration(const char * file)
                     PUSH_ERROR(file, "", "Missing -ref value for %s", fileConfig->id.c_str());
                     return -1;
                 }
-                fileConfig->refPattern = replaceDefinedVariable(defs, pop(*line));
+                fileConfig->refPattern = consolidateToken(defs, pop(*line));
                 /* Compile regular expression */
                 fileConfig->refRegex = new regex_t();
                 int reti = regcomp(fileConfig->refRegex, fileConfig->refPattern.c_str(), 0);
@@ -331,6 +415,18 @@ int loadConfiguration(const char * file)
                 }
 
                 fileConfig->endReqStyle[endReqStyle] = regex;
+
+            } else if (fileConfig && arg == "-sort") {
+                if (line->empty()) {
+                    PUSH_ERROR(file, "","Missing -sort value for %s", fileConfig->id.c_str());
+                    return -1;
+                }
+                std::string s = pop(*line);
+                fileConfig->sortMode = fileConfig->getSortMode(s);
+                if (fileConfig->sortMode == ReqFileConfig::SORT_UNKNOWN) {
+                    PUSH_ERROR(file, "","Unknown sort mode '%s' for %s", s.c_str(), fileConfig->id.c_str());
+                    return -1;
+                }
 
             } else if (fileConfig && arg == "-type") {
                 if (line->empty()) {
@@ -509,15 +605,13 @@ void printTrac(const Requirement &r, bool reverse, bool verbose, ReqExportFormat
 
 /** Print traceability matrix of file.
   */
-void printTracOfFile(const char *docId, bool reverse, bool verbose, ReqExportFormat format)
+void printTracOfFile(const ReqFileConfig &rfc, bool reverse, bool verbose, ReqExportFormat format)
 {
-    printTracHeader(docId, reverse, verbose, format);
+    printTracHeader(rfc.id.c_str(), reverse, verbose, format);
 
-    std::map<std::string, Requirement>::iterator r;
-    FOREACH(r, Requirements) {
-        if (!docId || r->second.parentDocument->id == docId) {
-            printTrac(r->second, reverse, verbose, format);
-        }
+    std::set<Requirement*, ReqCompare>::iterator r;
+    FOREACH(r, rfc.requirements) {
+        printTrac(*(*r), reverse, verbose, format);
     }
 }
 
@@ -530,14 +624,14 @@ void printMatrix(int argc, const char **argv, bool reverse, bool verbose, ReqExp
     std::map<std::string, ReqFileConfig*>::iterator file;
     if (!argc) {
         FOREACH(file, ReqConfig) {
-            printTracOfFile(file->second->id.c_str(), reverse, verbose, format);
+            printTracOfFile(*(file->second), reverse, verbose, format);
         }
     } else while (argc > 0) {
         const char *docId = argv[0];
         file = ReqConfig.find(docId);
         if (file == ReqConfig.end()) {
             LOG_ERROR("Invalid document id: %s", docId);
-        } else printTracOfFile(file->second->id.c_str(), reverse, verbose, format);
+        } else printTracOfFile(*(file->second), reverse, verbose, format);
         argc--;
         argv++;
     }
@@ -588,13 +682,13 @@ void printTextOfReqs(int argc, const char **argv, ReviewMode rm, ReqExportFormat
 
     std::list<ReqFileConfig*>::iterator doc;
     FOREACH(doc, documents) {
-        std::map<std::string, Requirement*, stringCompare>::iterator req;
+        std::set<Requirement*, ReqCompare>::iterator req;
         FOREACH(req, (*doc)->requirements) {
             if (format == REQ_X_CSV) {
-                OUTPUT("%s,%s\r\n", escapeCsv(req->second->id).c_str(), escapeCsv(req->second->text).c_str());
+                OUTPUT("%s,%s\r\n", escapeCsv((*req)->id).c_str(), escapeCsv((*req)->text).c_str());
             } else {
-                OUTPUT("%s\n", req->second->id.c_str());
-                printIndented(req->second->text);
+                OUTPUT("%s\n", (*req)->id.c_str());
+                printIndented((*req)->text);
                 OUTPUT("\n");
             }
 
@@ -657,22 +751,20 @@ void printSummary(int argc, const char **argv)
     if (doPrintTotal) printPercent(ReqTotal, ReqCovered, "Total", "", false);
 }
 
-void printRequirementsOfFile(StatusMode status, const char *documentId)
+void printRequirementsOfFile(StatusMode status, const ReqFileConfig &rfc)
 {
-    std::map<std::string, Requirement>::iterator r;
-    FOREACH(r, Requirements) {
-        if (!documentId || r->second.parentDocument->id == documentId) {
-            bool doPrint = false;
-            if (REQ_ALL == status || r->second.coveredBy.empty()) doPrint = true;
+    std::set<Requirement*, ReqCompare>::iterator r;
+    FOREACH(r, rfc.requirements) {
+        bool doPrint = false;
+        if (REQ_ALL == status || (*r)->coveredBy.empty()) doPrint = true;
 
-            if (doPrint) {
-                if (r->second.coveredBy.empty()) OUTPUT("U");
-                else OUTPUT(" ");
+        if (doPrint) {
+            if ((*r)->coveredBy.empty()) OUTPUT("U");
+            else OUTPUT(" ");
 
-                OUTPUT(" %s", r->second.id.c_str());
-                if (REQ_ALL == status) OUTPUT(" %s", r->second.parentDocument->id.c_str());
-                OUTPUT("\n");
-            }
+            OUTPUT(" %s", (*r)->id.c_str());
+            if (REQ_ALL == status) OUTPUT(" %s", (*r)->parentDocument->id.c_str());
+            OUTPUT("\n");
         }
     }
 }
@@ -682,13 +774,13 @@ void printRequirements(StatusMode status, int argc, const char **argv)
     if (!argc) {
         // print requirements of all files
         FOREACH(file, ReqConfig) {
-            printRequirementsOfFile(status, file->first.c_str());
+            printRequirementsOfFile(status, *(file->second));
         }
     } else while (argc > 0) {
         const char *docId = argv[0];
         file = ReqConfig.find(docId);
         if (file == ReqConfig.end()) LOG_ERROR("Invalid document id: %s", docId);
-        else printRequirementsOfFile(status, argv[0]);
+        else printRequirementsOfFile(status, *(file->second));
         argc--;
         argv++;
     }

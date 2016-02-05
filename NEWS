@@ -1,3 +1,20 @@
+Reqflow 1.5.0, 22 Oct 2015
+
+    - resolve environment variable in .req config file: syntax $x of ${x}
+
+Reqflow 1.4.2, 13 Jun 2015
+
+    - fix bug in capture of requirements from odt documents
+
+Reqflow 1.4.1, 8 Dec 2014
+
+    - fix missing escaping of some HTML parts (HTML output format only)
+
+
+Reqflow 1.4.0, 30 Oct 2014
+
+    - keep document order for the requirements. alphanumeric order is still
+      possible with --sort in the .req file.
 
 Reqflow 1.3.4, 31 Jul 2014
 
